@@ -1,5 +1,5 @@
 [package]
-name = "rusthttpfs"
+name = "httpfs"
 version = "0.1.0"
 edition = "2021"
 

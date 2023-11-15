@@ -12,7 +12,7 @@ use log::debug;
 
 use crate::http_reader::{DataAddr, HttpReader};
 
-const TTL: Duration = Duration::from_secs(1);
+const FILE_INFO_CACHE_TTL: Duration = Duration::from_secs(60);
 const MAX_READERS: usize = 5;
 
 const DIR_ATTR: FileAttr = FileAttr {
@@ -44,7 +44,6 @@ pub struct HttpFs {
 impl HttpFs {
     pub fn new(url: &str, file_size: usize, file_name: &str, additional_headers: Vec<String>) -> Self {
         HttpFs {
-            // May be it is a small crunch: we need at least one reader to fetch file size.
             readers: Arc::new(Mutex::new(vec![])),
             file_size,
             file_name: String::from(file_name),
@@ -116,7 +115,7 @@ impl HttpFs {
 impl Filesystem for HttpFs {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         if parent == 1 && name.to_str() == Some(&self.file_name) {
-            reply.entry(&TTL, &self.get_file_attr(), 0);
+            reply.entry(&FILE_INFO_CACHE_TTL, &self.get_file_attr(), 0);
         } else {
             reply.error(ENOENT);
         }
@@ -124,8 +123,8 @@ impl Filesystem for HttpFs {
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         match ino {
-            1 => reply.attr(&TTL, &DIR_ATTR),
-            2 => reply.attr(&TTL, &self.get_file_attr()),
+            1 => reply.attr(&FILE_INFO_CACHE_TTL, &DIR_ATTR),
+            2 => reply.attr(&FILE_INFO_CACHE_TTL, &self.get_file_attr()),
             _ => reply.error(ENOENT),
         }
     }
@@ -145,7 +144,6 @@ impl Filesystem for HttpFs {
         if ino == 2 {
             let data = self
                 .drain_data_from_suitable_reader(offset as usize, _size as usize);
-
             debug!("-------> Replied data block: offset={} size={}", offset, data.len());
             reply.data(&data);
         } else {
