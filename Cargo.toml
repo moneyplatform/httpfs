@@ -1,0 +1,18 @@
+[package]
+name = "rusthttpfs"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap-v3 = "3.0.0-beta.1"
+fuser = "0.14.0"
+clap = "4.4.7"
+libc = "0.2.150"
+curl = "0.4.44"
+atomic-counter = "1.0.1"
+log = "0.4.20"
+env_logger = "0.10.0"
+
+[dev-dependencies]
