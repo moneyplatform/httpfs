@@ -119,8 +119,8 @@ impl HttpReader {
             return None;
         }
         let current_possibly_data_end = current_offset + MAX_BUFFER_APPEND;
-        if abs_addr.offset > current_possibly_data_end {
-            debug!("Requested offset {} greater than existing data range {}",
+        if abs_addr.size + abs_addr.offset > current_possibly_data_end {
+            debug!("Requested offset {} can not be reached for reader {}",
                 abs_addr.offset, current_possibly_data_end);
             return None;
         }
