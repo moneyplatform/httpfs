@@ -37,26 +37,6 @@ impl HttpFs {
         }
     }
 
-    fn get_file_attr(&self) -> FileAttr {
-        FileAttr {
-            ino: 2,
-            size: self.file_size as u64,
-            blocks: 1,
-            atime: UNIX_EPOCH, // 1970-01-01 00:00:00
-            mtime: UNIX_EPOCH,
-            ctime: UNIX_EPOCH,
-            crtime: UNIX_EPOCH,
-            kind: FileType::RegularFile,
-            perm: 0o644,
-            nlink: 1,
-            uid: 501,
-            gid: 20,
-            rdev: 0,
-            flags: 0,
-            blksize: 512,
-        }
-    }
-
     pub fn drain_data_from_suitable_reader(&self, offset: usize, size: usize) -> Result<Vec<u8>, ()> {
         let addr = DataAddr::new(offset, size);
         let arc = Arc::clone(&self.readers);
