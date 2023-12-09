@@ -1,7 +1,7 @@
 use std::ffi::OsStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 
 use fuser::{
     FileAttr, Filesystem, FileType, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
@@ -9,6 +9,7 @@ use fuser::{
 };
 use libc::ENOENT;
 use log::{debug, warn};
+use users::{get_current_gid, get_current_uid};
 
 use crate::http_reader::{DataAddr, HttpReader};
 
@@ -16,24 +17,6 @@ const FILE_INFO_CACHE_TTL: Duration = Duration::from_secs(60);
 const MAX_READERS: usize = 5;
 const REREAD_ATTEMPTS: u8 = 5;
 
-
-const DIR_ATTR: FileAttr = FileAttr {
-    ino: 1,
-    size: 0,
-    blocks: 0,
-    atime: UNIX_EPOCH, // 1970-01-01 00:00:00
-    mtime: UNIX_EPOCH,
-    ctime: UNIX_EPOCH,
-    crtime: UNIX_EPOCH,
-    kind: FileType::Directory,
-    perm: 0o755,
-    nlink: 2,
-    uid: 501,
-    gid: 20,
-    rdev: 0,
-    flags: 0,
-    blksize: 512,
-};
 
 pub struct HttpFs {
     readers: Arc<Mutex<Vec<Arc<HttpReader>>>>,
@@ -120,6 +103,46 @@ impl HttpFs {
             }
         }
     }
+
+    fn get_file_attr(&self) -> FileAttr {
+        FileAttr {
+            ino: 2,
+            size: self.file_size as u64,
+            blocks: 1,
+            atime: SystemTime::now(),
+            mtime: SystemTime::now(),
+            ctime: SystemTime::now(),
+            crtime: SystemTime::now(),
+            kind: FileType::RegularFile,
+            perm: 0o644,
+            nlink: 1,
+            uid: get_current_uid(),
+            gid: get_current_gid(),
+            rdev: 0,
+            flags: 0,
+            blksize: 512,
+        }
+    }
+
+    fn get_dir_attr(&self) -> FileAttr {
+        FileAttr {
+            ino: 1,
+            size: 0,
+            blocks: 0,
+            atime: SystemTime::now(),
+            mtime: SystemTime::now(),
+            ctime: SystemTime::now(),
+            crtime: SystemTime::now(),
+            kind: FileType::Directory,
+            perm: 0o755,
+            nlink: 2,
+            uid: get_current_uid(),
+            gid: get_current_gid(),
+            rdev: 0,
+            flags: 0,
+            blksize: 512,
+        }
+    }
 }
 
 impl Filesystem for HttpFs {
@@ -133,7 +156,7 @@ impl Filesystem for HttpFs {
 
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         match ino {
-            1 => reply.attr(&FILE_INFO_CACHE_TTL, &DIR_ATTR),
+            1 => reply.attr(&FILE_INFO_CACHE_TTL, &self.get_dir_attr()),
             2 => reply.attr(&FILE_INFO_CACHE_TTL, &self.get_file_attr()),
             _ => reply.error(ENOENT),
         }
