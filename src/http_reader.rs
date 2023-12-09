@@ -4,12 +4,12 @@ use std::thread::sleep;
 use std::time::Duration;
 
 use curl::easy::{Easy, List};
-use log::debug;
+use log::{debug, warn};
 
-const MAX_BUFFER_APPEND: usize = 1024 * 1024;
-const MAX_BUFFER_PREPEND: usize = 512 * 1024;
+const MAX_BUFFER_APPEND: usize = 1024 * 1024 * 8;
 const MAX_RESPONSE_AWAIT_MS: u64 = 10000;
-const BUFFER_FILL_RECHECK_MS: u64 = 10; // How to often check buffer is filled
+// How to often check the buffer is filled
+const BUFFER_FILL_RECHECK_MS: u64 = 10;
 
 #[derive(PartialEq, Debug, Clone, Copy)]
 pub struct DataAddr {
@@ -65,7 +65,9 @@ impl HttpReader {
             Some(data) => { data }
         };
 
-        self.wait_for_data(abs_addr);
+        if !self.wait_for_data(abs_addr) {
+            return None
+        }
 
         let data_arc = Arc::clone(&self.data);
         let mut data = data_arc.lock().unwrap();
@@ -77,20 +79,17 @@ impl HttpReader {
             .to_vec()
             .clone();
 
-        if rel_addr.offset > MAX_BUFFER_PREPEND {
-            let shift = rel_addr.offset - MAX_BUFFER_PREPEND;
-            // here we removing all data from [start] to [end of reading block - BUFFER_PREPEND]
-            debug!("x------- Removing part of data {:?}", 0..shift);
-            *data = data[shift..].to_vec().clone();
-            *offset += shift;
-        }
+        debug!("x------- Removing part of data {:?}", 0..rel_addr.offset);
+        *data = data[rel_addr.offset..].to_vec().clone();
+        *offset += rel_addr.offset;
 
         debug!("-------> End drain data. Current offset {}, length {}", offset, data.len());
         Some(requested_data)
     }
 
-    fn wait_for_data(&self, abs_addr: DataAddr) {
-        // really data downloading may be in progress, because we need to check data availability
+    // Returns true if you managed to get the necessary data.
+    fn wait_for_data(&self, abs_addr: DataAddr) -> bool {
+        // Really data downloading may be in progress, because we need to check data availability.
         let end = min(abs_addr.get_data_end_position(), self.resource_size);
         debug!("S------- Waiting to data block {}-{} will be read from http", abs_addr.offset, end);
         let mut total_waited = 0;
@@ -98,9 +97,11 @@ impl HttpReader {
             sleep(Duration::from_millis(BUFFER_FILL_RECHECK_MS));
             total_waited += BUFFER_FILL_RECHECK_MS;
             if total_waited > MAX_RESPONSE_AWAIT_MS {
-                panic!("The time to wait the data is over!");
+                warn!("The time to wait the data is over!");
+                return false;
             }
         }
+        return true;
     }
 
     fn get_offset(&self) -> usize {

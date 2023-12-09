@@ -8,12 +8,14 @@ use fuser::{
     Request,
 };
 use libc::ENOENT;
-use log::debug;
+use log::{debug, warn};
 
 use crate::http_reader::{DataAddr, HttpReader};
 
 const FILE_INFO_CACHE_TTL: Duration = Duration::from_secs(60);
 const MAX_READERS: usize = 5;
+const REREAD_ATTEMPTS: u8 = 5;
+
 
 const DIR_ATTR: FileAttr = FileAttr {
     ino: 1,
@@ -72,7 +74,7 @@ impl HttpFs {
         }
     }
 
-    pub fn drain_data_from_suitable_reader(&self, offset: usize, size: usize) -> Vec<u8> {
+    pub fn drain_data_from_suitable_reader(&self, offset: usize, size: usize) -> Result<Vec<u8>, ()> {
         let addr = DataAddr::new(offset, size);
         let arc = Arc::clone(&self.readers);
         let mut readers = arc.lock().unwrap();
@@ -84,6 +86,7 @@ impl HttpFs {
                 break;
             }
         }
+        // no any suitable reader found, creating new
         if res == None {
             debug!("!------- Suitable reader not found, creating new...");
             let reader = Arc::new(HttpReader::new(&self.resource_url, offset, self.file_size, self.additional_headers.clone()));
@@ -107,8 +110,15 @@ impl HttpFs {
             }
             debug!("Total readers now {}", readers.len());
         }
-        let data = res.unwrap();
-        data
+
+        match res {
+            None => {
+                Err(())
+            }
+            Some(data) => {
+                Ok(data)
+            }
+        }
     }
 }
 
@@ -142,10 +152,18 @@ impl Filesystem for HttpFs {
     ) {
         debug!("-------> Requested data block: offset={} size={}", offset, _size);
         if ino == 2 {
-            let data = self
-                .drain_data_from_suitable_reader(offset as usize, _size as usize);
-            debug!("-------> Replied data block: offset={} size={}", offset, data.len());
-            reply.data(&data);
+            for i in [0..REREAD_ATTEMPTS] {
+                match self.drain_data_from_suitable_reader(offset as usize, _size as usize) {
+                    Ok(data) => {
+                        debug!("-------> Replied data block: offset={} size={}", offset, data.len());
+                        reply.data(&data);
+                        break;
+                    }
+                    Err(_) => {
+                        warn!("Error read block in attempt {:?}", i)
+                    }
+                }
+            }
         } else {
             reply.error(ENOENT);
         }
