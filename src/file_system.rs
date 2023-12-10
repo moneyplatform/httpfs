@@ -24,6 +24,7 @@ pub struct HttpFs {
     file_name: String,
     resource_url: String,
     additional_headers: Vec<String>,
+    readers_counter: Arc<Mutex<usize>>, // just for logging
 }
 
 impl HttpFs {
@@ -34,6 +35,7 @@ impl HttpFs {
             file_name: String::from(file_name),
             resource_url: String::from(url),
             additional_headers,
+            readers_counter: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -52,7 +54,14 @@ impl HttpFs {
         // no any suitable reader found, creating new
         if res == None {
             debug!("!------- Suitable reader not found, creating new...");
-            let reader = Arc::new(HttpReader::new(&self.resource_url, offset, self.file_size, self.additional_headers.clone()));
+
+            let reader = Arc::new(HttpReader::new(
+                &self.resource_url,
+                offset,
+                self.file_size,
+                self.additional_headers.clone(),
+                self.inc_and_get_readers_counter()
+            ));
             let rc = Arc::clone(&reader);
             thread::spawn(move || {
                 rc.fetching_loop();
@@ -122,6 +131,12 @@ impl HttpFs {
             flags: 0,
             blksize: 512,
         }
+    }
+    fn inc_and_get_readers_counter(&self) -> usize {
+        let arc = Arc::clone(&self.readers_counter);
+        let mut counter = arc.lock().unwrap();
+        *counter += 1;
+        *counter
     }
 }
 

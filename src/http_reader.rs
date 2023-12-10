@@ -6,7 +6,7 @@ use std::time::Duration;
 use curl::easy::{Easy, List};
 use log::{debug, warn};
 
-const MAX_BUFFER_APPEND: usize = 1024 * 1024 * 8;
+const MAX_BUFFER_SIZE: usize = 1024 * 1024;
 const MAX_RESPONSE_AWAIT_MS: u64 = 10000;
 // How to often check the buffer is filled
 const BUFFER_FILL_RECHECK_MS: u64 = 10;
@@ -37,6 +37,7 @@ pub struct HttpReader {
     resource_url: String,
     should_stop: Arc<Mutex<bool>>,
     additional_headers: Vec<String>,
+    ordinal_number: usize, // just for logging
 }
 
 impl HttpReader {
@@ -45,6 +46,7 @@ impl HttpReader {
         start_offset: usize,
         resource_size: usize,
         additional_headers: Vec<String>,
+        ordinal_number: usize,
     ) -> Self {
         HttpReader {
             data: Arc::new(Mutex::new(vec![])),
@@ -53,20 +55,21 @@ impl HttpReader {
             resource_url: String::from(url),
             should_stop: Arc::new(Mutex::new(false)),
             additional_headers,
+            ordinal_number,
         }
     }
 
     // Returns requested data from internal buffer or None if requested data isn't exists.
     // Does left trim buffer if it required (leaning on MAX_BUFFER_PREPEND).
     pub fn try_drain_data(&self, abs_addr: DataAddr) -> Option<Vec<u8>> {
-        debug!("-------> Start drain data");
+        debug!("[reader {}] Trying to drain data", self.ordinal_number);
         let rel_addr = match self.abs_to_rel_addr(abs_addr) {
             None => { return None; }
             Some(data) => { data }
         };
 
         if !self.wait_for_data(abs_addr) {
-            return None
+            return None;
         }
 
         let data_arc = Arc::clone(&self.data);
@@ -75,15 +78,16 @@ impl HttpReader {
         let mut offset = offset_arc.lock().unwrap();
 
         let end = min(data.len(), rel_addr.get_data_end_position());
+        debug!("[reader {}] Preparing to write block {:?}", self.ordinal_number, rel_addr.offset..end);
         let requested_data = data[rel_addr.offset..end]
             .to_vec()
             .clone();
 
-        debug!("x------- Removing part of data {:?}", 0..rel_addr.offset);
-        *data = data[rel_addr.offset..].to_vec().clone();
-        *offset += rel_addr.offset;
+        debug!("[reader {}] Removing part of data {:?}", self.ordinal_number, 0..end);
+        *data = data[end..].to_vec().clone();
+        *offset += end;
 
-        debug!("-------> End drain data. Current offset {}, length {}", offset, data.len());
+        debug!("[reader {}] End drain data. Current offset {}, length {}", self.ordinal_number, offset, data.len());
         Some(requested_data)
     }
 
@@ -91,13 +95,14 @@ impl HttpReader {
     fn wait_for_data(&self, abs_addr: DataAddr) -> bool {
         // Really data downloading may be in progress, because we need to check data availability.
         let end = min(abs_addr.get_data_end_position(), self.resource_size);
-        debug!("S------- Waiting to data block {}-{} will be read from http", abs_addr.offset, end);
+        debug!("[reader {}] Waiting to read data block {:?} from http. Current data {:?}",
+            self.ordinal_number,[abs_addr.offset..end], [self.get_offset()..self.get_offset() + self.get_data_len()]);
         let mut total_waited = 0;
         while self.get_offset() + self.get_data_len() < end {
             sleep(Duration::from_millis(BUFFER_FILL_RECHECK_MS));
             total_waited += BUFFER_FILL_RECHECK_MS;
             if total_waited > MAX_RESPONSE_AWAIT_MS {
-                warn!("The time to wait the data is over!");
+                warn!("[reader {}] The time to wait the data is over!", self.ordinal_number,);
                 return false;
             }
         }
@@ -113,27 +118,31 @@ impl HttpReader {
     // Validates requested data position in file and returns position of this data in local buffer.
     // Returns None if requested data not in current buffer.
     fn abs_to_rel_addr(&self, abs_addr: DataAddr) -> Option<DataAddr> {
-        let current_offset = self.get_offset();
-        if abs_addr.offset < current_offset {
-            debug!("Requested offset {} less than existing {}", abs_addr.offset, current_offset);
+        let reader_offset = self.get_offset();
+        if abs_addr.offset < reader_offset {
+            debug!("[reader {}] Requested offset {} less than existing {}",
+                self.ordinal_number, abs_addr.offset, reader_offset);
             return None;
         }
-        let current_possibly_data_end = current_offset + MAX_BUFFER_APPEND;
-        if abs_addr.size + abs_addr.offset > current_possibly_data_end {
-            debug!("Requested offset {} can not be reached for reader {}",
-                abs_addr.offset, current_possibly_data_end);
+        let reader_possibly_data_reach = reader_offset + MAX_BUFFER_SIZE;
+        if abs_addr.get_data_end_position() > reader_possibly_data_reach {
+            debug!("[reader {}] Requested data {:?} can not be reached for reader {:?}",
+                self.ordinal_number,
+                [abs_addr.offset..abs_addr.get_data_end_position()],
+                [reader_offset..reader_possibly_data_reach]
+            );
             return None;
         }
         let local_addr = DataAddr {
-            offset: abs_addr.offset - current_offset,
+            offset: abs_addr.offset - reader_offset,
             size: abs_addr.size,
         };
-        debug!("Translated absolute addr {:?} to local {:?}", abs_addr, local_addr);
+        debug!("[reader {}] Translated absolute addr {:?} to local {:?}", self.ordinal_number, abs_addr, local_addr);
         Some(local_addr)
     }
 
     pub fn fetching_loop(&self) {
-        debug!("<------- Setup URL fetching");
+        debug!("[reader {}] Setup URL fetching", self.ordinal_number);
         let mut easy = Easy::new();
         easy.buffer_size(16384).unwrap();
         easy.url(&self.resource_url).unwrap();
@@ -145,43 +154,45 @@ impl HttpReader {
             headers.append(&x).unwrap();
         });
 
-        debug!("CURL: Using headers {:?}", headers);
+        debug!("[reader {}] CURL: Using headers {:?}", self.ordinal_number, headers);
 
         easy.http_headers(headers).unwrap();
 
         let mut transfer = easy.transfer();
         transfer.write_function(|buf| {
             let mut total_slept = 0;
-            while self.get_data_len() >= MAX_BUFFER_APPEND {
-                sleep(Duration::from_millis(BUFFER_FILL_RECHECK_MS));
+            while self.get_data_len() >= MAX_BUFFER_SIZE {
                 if total_slept == 0 {
-                    // Writing log only in first iteration
-                    debug!("<------- Sleeping because buffer is full");
+                    // Write log only the first iteration
+                    debug!("[reader {}] Sleeping because buffer is full. Current data range: {:?}",
+                        self.ordinal_number, [self.get_offset()..self.get_offset()+self.get_data_len()]);
                 }
+                sleep(Duration::from_millis(BUFFER_FILL_RECHECK_MS));
                 total_slept += BUFFER_FILL_RECHECK_MS;
                 if self.should_stop() {
-                    debug!("Stop fetching loop");
+                    debug!("[reader {}] Stop fetching loop", self.ordinal_number);
                     return Ok(0);
                 }
             }
             if total_slept > 0 {
-                debug!("<------- Waked up from sleeping {} ms", total_slept);
+                debug!("[reader {}] Waked up from sleeping {} ms", self.ordinal_number, total_slept);
             }
             let data = Arc::clone(&self.data);
             let mut _data = data.lock().unwrap();
             _data.extend(buf);
-            debug!("<------- Updated data buffer by {} bytes, new len {}", buf.len(), _data.len());
+            debug!("[reader {}] Added {} bytes of data to buffer, new len is {}",
+                self.ordinal_number, buf.len(), _data.len());
 
             Ok(buf.len())
         }).unwrap();
 
-        debug!("<------- Performing URL fetching");
+        debug!("[reader {}] Performing URL fetching", self.ordinal_number);
         let res = transfer.perform();
-        debug!("<------- Finished performing URL fetching");
+        debug!("[reader {}] Finished performing URL fetching", self.ordinal_number);
 
         match res {
             Ok(_) => {}
-            Err(e) => debug!("<------- Write function returns error:  {}", e)
+            Err(e) => debug!("[reader {}] Write function returns error:  {}", self.ordinal_number, e)
         }
     }
 
@@ -198,6 +209,7 @@ impl HttpReader {
     }
 
     pub fn stop(&self) {
+        debug!("[reader {}] Stopping reader", self.ordinal_number);
         let arc = Arc::clone(&self.should_stop);
         let mut should_stop = arc.lock().unwrap();
         *should_stop = true
