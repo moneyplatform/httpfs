@@ -85,7 +85,7 @@ impl HttpReader {
 
         debug!("[reader {}] Removing part of data {:?}", self.ordinal_number, 0..end);
         *data = data[end..].to_vec().clone();
-        *offset += rel_addr.offset;
+        *offset += end;
 
         debug!("[reader {}] End drain data. Current offset {}, length {}", self.ordinal_number, offset, data.len());
         Some(requested_data)
@@ -161,14 +161,13 @@ impl HttpReader {
         let mut transfer = easy.transfer();
         transfer.write_function(|buf| {
             let mut total_slept = 0;
-            let data_len = self.get_data_len();
-            while data_len >= MAX_BUFFER_SIZE {
-                sleep(Duration::from_millis(BUFFER_FILL_RECHECK_MS));
+            while self.get_data_len() >= MAX_BUFFER_SIZE {
                 if total_slept == 0 {
-                    // Writing log only in first iteration
-                    debug!("[reader {}] Sleeping because buffer is full. Current data range: {:?}-{:?}",
-                        self.ordinal_number, self.get_offset(), self.get_offset()+data_len);
+                    // Write log only the first iteration
+                    debug!("[reader {}] Sleeping because buffer is full. Current data range: {:?}",
+                        self.ordinal_number, [self.get_offset()..self.get_offset()+self.get_data_len()]);
                 }
+                sleep(Duration::from_millis(BUFFER_FILL_RECHECK_MS));
                 total_slept += BUFFER_FILL_RECHECK_MS;
                 if self.should_stop() {
                     debug!("[reader {}] Stop fetching loop", self.ordinal_number);
@@ -181,7 +180,7 @@ impl HttpReader {
             let data = Arc::clone(&self.data);
             let mut _data = data.lock().unwrap();
             _data.extend(buf);
-            debug!("[reader {}] Updated data buffer by {} bytes, new len {}",
+            debug!("[reader {}] Added {} bytes of data to buffer, new len is {}",
                 self.ordinal_number, buf.len(), _data.len());
 
             Ok(buf.len())
@@ -210,6 +209,7 @@ impl HttpReader {
     }
 
     pub fn stop(&self) {
+        debug!("[reader {}] Stopping reader", self.ordinal_number);
         let arc = Arc::clone(&self.should_stop);
         let mut should_stop = arc.lock().unwrap();
         *should_stop = true
