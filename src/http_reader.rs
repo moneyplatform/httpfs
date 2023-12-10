@@ -6,7 +6,7 @@ use std::time::Duration;
 use curl::easy::{Easy, List};
 use log::{debug, warn};
 
-const MAX_BUFFER_SIZE: usize = 1024 * 128;
+const MAX_BUFFER_SIZE: usize = 1024 * 1024;
 const MAX_RESPONSE_AWAIT_MS: u64 = 10000;
 // How to often check the buffer is filled
 const BUFFER_FILL_RECHECK_MS: u64 = 10;
