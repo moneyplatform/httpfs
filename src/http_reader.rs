@@ -62,7 +62,7 @@ impl HttpReader {
     // Returns requested data from internal buffer or None if requested data isn't exists.
     // Does left trim buffer if it required (leaning on MAX_BUFFER_PREPEND).
     pub fn try_drain_data(&self, abs_addr: DataAddr) -> Option<Vec<u8>> {
-        debug!("[reader {}] Start draining data", self.ordinal_number);
+        debug!("[reader {}] Trying to drain data", self.ordinal_number);
         let rel_addr = match self.abs_to_rel_addr(abs_addr) {
             None => { return None; }
             Some(data) => { data }
@@ -83,8 +83,8 @@ impl HttpReader {
             .to_vec()
             .clone();
 
-        debug!("[reader {}] Removing part of data {:?}", self.ordinal_number, 0..rel_addr.offset);
-        *data = data[rel_addr.offset..].to_vec().clone();
+        debug!("[reader {}] Removing part of data {:?}", self.ordinal_number, 0..end);
+        *data = data[end..].to_vec().clone();
         *offset += rel_addr.offset;
 
         debug!("[reader {}] End drain data. Current offset {}, length {}", self.ordinal_number, offset, data.len());
