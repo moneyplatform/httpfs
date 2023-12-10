@@ -92,12 +92,10 @@ impl HttpReader {
     fn wait_for_data(&self, abs_addr: DataAddr) -> bool {
         // Really data downloading may be in progress, because we need to check data availability.
         let end = min(abs_addr.get_data_end_position(), self.resource_size);
-        let offset = self.get_offset();
-        let data_len = self.get_data_len();
         debug!("S------- Waiting to read data block {:?} from http. Current data {:?}",
-            [abs_addr.offset..end], [offset..offset+data_len]);
+            [abs_addr.offset..end], [self.get_offset()..self.get_offset() + self.get_data_len()]);
         let mut total_waited = 0;
-        while offset + data_len < end {
+        while self.get_offset() + self.get_data_len() < end {
             sleep(Duration::from_millis(BUFFER_FILL_RECHECK_MS));
             total_waited += BUFFER_FILL_RECHECK_MS;
             if total_waited > MAX_RESPONSE_AWAIT_MS {
