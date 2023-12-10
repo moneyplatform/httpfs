@@ -6,7 +6,7 @@ use std::time::Duration;
 use curl::easy::{Easy, List};
 use log::{debug, warn};
 
-const MAX_BUFFER_APPEND: usize = 1024 * 1024 * 8;
+const MAX_BUFFER_SIZE: usize = 1024 * 128;
 const MAX_RESPONSE_AWAIT_MS: u64 = 10000;
 // How to often check the buffer is filled
 const BUFFER_FILL_RECHECK_MS: u64 = 10;
@@ -66,7 +66,7 @@ impl HttpReader {
         };
 
         if !self.wait_for_data(abs_addr) {
-            return None
+            return None;
         }
 
         let data_arc = Arc::clone(&self.data);
@@ -75,6 +75,7 @@ impl HttpReader {
         let mut offset = offset_arc.lock().unwrap();
 
         let end = min(data.len(), rel_addr.get_data_end_position());
+        debug!("-------> Preparing to write block {:?}", rel_addr.offset..end);
         let requested_data = data[rel_addr.offset..end]
             .to_vec()
             .clone();
@@ -113,19 +114,19 @@ impl HttpReader {
     // Validates requested data position in file and returns position of this data in local buffer.
     // Returns None if requested data not in current buffer.
     fn abs_to_rel_addr(&self, abs_addr: DataAddr) -> Option<DataAddr> {
-        let current_offset = self.get_offset();
-        if abs_addr.offset < current_offset {
-            debug!("Requested offset {} less than existing {}", abs_addr.offset, current_offset);
+        let reader_offset = self.get_offset();
+        if abs_addr.offset < reader_offset {
+            debug!("Requested offset {} less than existing {}", abs_addr.offset, reader_offset);
             return None;
         }
-        let current_possibly_data_end = current_offset + MAX_BUFFER_APPEND;
-        if abs_addr.size + abs_addr.offset > current_possibly_data_end {
+        let reader_possibly_data_reach = reader_offset + MAX_BUFFER_SIZE;
+        if abs_addr.get_data_end_position() > reader_possibly_data_reach {
             debug!("Requested offset {} can not be reached for reader {}",
-                abs_addr.offset, current_possibly_data_end);
+                reader_possibly_data_reach, abs_addr.offset);
             return None;
         }
         let local_addr = DataAddr {
-            offset: abs_addr.offset - current_offset,
+            offset: abs_addr.offset - reader_offset,
             size: abs_addr.size,
         };
         debug!("Translated absolute addr {:?} to local {:?}", abs_addr, local_addr);
@@ -152,11 +153,13 @@ impl HttpReader {
         let mut transfer = easy.transfer();
         transfer.write_function(|buf| {
             let mut total_slept = 0;
-            while self.get_data_len() >= MAX_BUFFER_APPEND {
+            let data_len = self.get_data_len();
+            while data_len >= MAX_BUFFER_SIZE {
                 sleep(Duration::from_millis(BUFFER_FILL_RECHECK_MS));
                 if total_slept == 0 {
                     // Writing log only in first iteration
-                    debug!("<------- Sleeping because buffer is full");
+                    debug!("<------- Sleeping because buffer is full. Current data range: {:?}-{:?}",
+                        self.get_offset(), data_len);
                 }
                 total_slept += BUFFER_FILL_RECHECK_MS;
                 if self.should_stop() {
