@@ -121,8 +121,8 @@ impl HttpReader {
         }
         let reader_possibly_data_reach = reader_offset + MAX_BUFFER_SIZE;
         if abs_addr.get_data_end_position() > reader_possibly_data_reach {
-            debug!("Requested offset {} can not be reached for reader {}",
-                reader_possibly_data_reach, abs_addr.offset);
+            debug!("Requested data position {} can not be reached for reader {}-{}",
+                abs_addr.get_data_end_position(), reader_offset, reader_possibly_data_reach);
             return None;
         }
         let local_addr = DataAddr {
