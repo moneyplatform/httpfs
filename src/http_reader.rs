@@ -160,7 +160,7 @@ impl HttpReader {
                 if total_slept == 0 {
                     // Writing log only in first iteration
                     debug!("<------- Sleeping because buffer is full. Current data range: {:?}-{:?}",
-                        self.get_offset(), data_len);
+                        self.get_offset(), self.get_offset()+data_len);
                 }
                 total_slept += BUFFER_FILL_RECHECK_MS;
                 if self.should_stop() {
