@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 clap-v3 = "3.0.0-beta.1"
-fuser = "0.14.0"
+fuser = "0.16.0"
 clap = "4.4.7"
 libc = "0.2.150"
 curl = "0.4.44"
